@@ -2,10 +2,10 @@
 
 import math
 import time
-from dataclasses import dataclass
 
 import pygame
 
+from contacts import Blip, Contact, ContactTracker
 from source import Reading
 
 BG = (2, 12, 6)
@@ -24,13 +24,6 @@ ECHO_WIDTH_DEG = 5     # wider than the 2 degree sweep step so neighbouring echo
 ECHO_DEPTH_PX = 9      # radial thickness of each echo
 TIGHT_GLOW = (2, 2)    # downscale factors for blurring: tight halo hugging each echo
 WIDE_GLOW = (4, 4)     # ...and a wide soft bloom that merges nearby contacts
-
-
-@dataclass
-class Blip:
-    angle: int
-    distance_cm: int
-    born: float
 
 
 def bearing(angle: float) -> int:
@@ -56,6 +49,7 @@ class RadarDisplay:
         self.angle: int | None = None
         self.last_distance: int | None = None
         self.direction = 0  # +1 sweeping left, -1 sweeping right, 0 static
+        self.tracker = ContactTracker()
 
         self._background = self._render_background()
 
@@ -151,6 +145,20 @@ class RadarDisplay:
             small = pygame.transform.smoothscale(small, (w, h))
         return pygame.transform.smoothscale(small, surf.get_size())
 
+    def _draw_contacts(self, surf: pygame.Surface, contacts: list[Contact], now: float):
+        for contact in contacts:
+            fade = max(0.3, 1 - (now - contact.last_seen) / self.persist)
+            colour = [int(c * fade) for c in GREEN]
+            x, y = self._to_xy(contact.angle, contact.distance_cm)
+
+            label = self.font.render(f"S{contact.id}  {contact.distance_cm} cm", True, colour)
+            lx = min(x + 22, self.width - label.get_width() - 4)
+            ly = max(4, y - 34)
+            pygame.draw.circle(surf, colour, (x, y), 14, 1)
+            pygame.draw.line(surf, colour, (x + 10, y - 10), (lx, ly + label.get_height()), 1)
+            surf.fill(BG, label.get_rect(topleft=(lx, ly)).inflate(8, 4))  # keep it readable over echoes
+            surf.blit(label, (lx, ly))
+
     def _draw_panel(self, surf: pygame.Surface, source_name: str, error: str | None):
         y = self.height - PANEL_HEIGHT + 14
 
@@ -163,9 +171,15 @@ class RadarDisplay:
                 rng = f"{self.last_distance:>3d} cm"
             else:
                 rng = "NO ECHO"
-            text = f"BRG {bearing(self.angle):03d}    RNG {rng:<7}    ECHOES {len(self.blips):>3d}"
+            text = f"BRG {bearing(self.angle):03d}    RNG {rng:<7}    CONTACTS {len(self.tracker.contacts)}"
             colour = GREEN
         surf.blit(self.big_font.render(text, True, colour), (MARGIN, y))
+
+        if self.tracker.contacts and not error:
+            nearest = min(self.tracker.contacts, key=lambda c: c.distance_cm)
+            text = f"NEAREST S{nearest.id}  {nearest.distance_cm} cm  BRG {bearing(nearest.angle):03d}"
+            label = self.font.render(text, True, GREEN)
+            surf.blit(label, (self.width - MARGIN - label.get_width(), y + 4))
 
         info = f"SOURCE {source_name}    RANGE {self.max_range} cm    PERSIST {self.persist:g} s    [Q] quit"
         surf.blit(self.font.render(info, True, DIM), (MARGIN, y + 34))
@@ -173,6 +187,7 @@ class RadarDisplay:
     def draw(self, surf: pygame.Surface, source_name: str = "", error: str | None = None):
         now = time.monotonic()
         self._expire_blips(now)
+        contacts = self.tracker.update(self.blips)
 
         surf.blit(self._background, (0, 0))
         # Additive blending: blurred glow first so nearby echoes bleed together, then the sharp echoes.
@@ -186,4 +201,5 @@ class RadarDisplay:
             sweep = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
             self._draw_sweep(sweep)
             surf.blit(sweep, (0, 0))
+        self._draw_contacts(surf, contacts, now)
         self._draw_panel(surf, source_name, error)
