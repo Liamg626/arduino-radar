@@ -7,7 +7,7 @@
 // Phase 1: USE_SERVO 0 -> sensor fixed, angle always reported as FIXED_ANGLE.
 // Phase 3: USE_SERVO 1 -> sensor mounted on the servo, sweeping MIN..MAX_ANGLE.
 
-#define USE_SERVO 0
+#define USE_SERVO 1
 
 #if USE_SERVO
 #include <Servo.h>

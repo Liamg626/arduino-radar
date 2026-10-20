@@ -14,9 +14,16 @@ DIM = (0, 120, 50)
 FAINT = (0, 55, 25)
 WARN = (255, 170, 40)
 
+HOT = (150, 255, 175)  # colour of a fresh echo before it cools to GREEN
+
 TRAIL_DEGREES = 25
 PANEL_HEIGHT = 80
 MARGIN = 40
+
+ECHO_WIDTH_DEG = 5     # wider than the 2 degree sweep step so neighbouring echoes merge
+ECHO_DEPTH_PX = 9      # radial thickness of each echo
+TIGHT_GLOW = (2, 2)    # downscale factors for blurring: tight halo hugging each echo
+WIDE_GLOW = (4, 4)     # ...and a wide soft bloom that merges nearby contacts
 
 
 @dataclass
@@ -67,10 +74,12 @@ class RadarDisplay:
 
     # --- drawing -------------------------------------------------------------
 
-    def _to_xy(self, angle: float, distance_cm: float) -> tuple[float, float]:
-        r = distance_cm / self.max_range * self.radius
+    def _polar(self, angle: float, r_px: float) -> tuple[float, float]:
         rad = math.radians(angle)
-        return self.cx + r * math.cos(rad), self.cy - r * math.sin(rad)
+        return self.cx + r_px * math.cos(rad), self.cy - r_px * math.sin(rad)
+
+    def _to_xy(self, angle: float, distance_cm: float) -> tuple[float, float]:
+        return self._polar(angle, distance_cm / self.max_range * self.radius)
 
     def _render_background(self) -> pygame.Surface:
         surf = pygame.Surface((self.width, self.height))
@@ -112,12 +121,35 @@ class RadarDisplay:
 
         pygame.draw.line(overlay, (*GREEN, 230), centre, self._to_xy(self.angle, self.max_range), 3)
 
-    def _draw_blips(self, overlay: pygame.Surface, now: float):
-        for blip in self.blips:
-            fade = 1 - (now - blip.born) / self.persist
-            x, y = self._to_xy(blip.angle, blip.distance_cm)
-            pygame.draw.circle(overlay, (*GREEN, int(60 * fade)), (x, y), 11)  # glow
-            pygame.draw.circle(overlay, (*GREEN, int(255 * fade)), (x, y), 5)
+    def _echo_polygon(self, angle: float, distance_cm: float) -> list[tuple[float, float]]:
+        """Annular sector covering one echo: a short thick arc centred on the reading."""
+        r = distance_cm / self.max_range * self.radius
+        r_out, r_in = r + ECHO_DEPTH_PX / 2, max(0, r - ECHO_DEPTH_PX / 2)
+        steps = 4
+        angles = [angle - ECHO_WIDTH_DEG / 2 + ECHO_WIDTH_DEG * i / steps for i in range(steps + 1)]
+        outer = [self._polar(a, r_out) for a in angles]
+        inner = [self._polar(a, r_in) for a in reversed(angles)]
+        return outer + inner
+
+    def _render_echoes(self, now: float) -> pygame.Surface:
+        """Echoes on a black layer, meant to be added onto the screen (black adds nothing).
+        Oldest first, so fresher, brighter echoes are painted over older ones they overlap."""
+        layer = pygame.Surface((self.width, self.height))
+        for blip in sorted(self.blips, key=lambda b: b.born):
+            life = (now - blip.born) / self.persist
+            heat = max(0.0, 1 - life * 4)  # first quarter of its life: HOT -> GREEN
+            brightness = (1 - life) ** 1.5
+            colour = [int((g + (h - g) * heat) * brightness) for h, g in zip(HOT, GREEN)]
+            pygame.draw.polygon(layer, colour, self._echo_polygon(blip.angle, blip.distance_cm))
+        return layer
+
+    def _blur(self, surf: pygame.Surface, factors: tuple[int, ...]) -> pygame.Surface:
+        w, h = surf.get_size()
+        small = surf
+        for factor in factors:
+            w, h = max(1, w // factor), max(1, h // factor)
+            small = pygame.transform.smoothscale(small, (w, h))
+        return pygame.transform.smoothscale(small, surf.get_size())
 
     def _draw_panel(self, surf: pygame.Surface, source_name: str, error: str | None):
         y = self.height - PANEL_HEIGHT + 14
@@ -143,12 +175,15 @@ class RadarDisplay:
         self._expire_blips(now)
 
         surf.blit(self._background, (0, 0))
-        # Separate layers: drawing onto an SRCALPHA surface replaces pixels rather than blending.
+        # Additive blending: blurred glow first so nearby echoes bleed together, then the sharp echoes.
+        echoes = self._render_echoes(now)
+        wide = self._blur(echoes, WIDE_GLOW)
+        surf.blit(wide, (0, 0), special_flags=pygame.BLEND_ADD)
+        surf.blit(self._blur(echoes, TIGHT_GLOW), (0, 0), special_flags=pygame.BLEND_ADD)
+        surf.blit(echoes, (0, 0), special_flags=pygame.BLEND_ADD)
+
         if self.angle is not None:
             sweep = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
             self._draw_sweep(sweep)
             surf.blit(sweep, (0, 0))
-        blips = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        self._draw_blips(blips, now)
-        surf.blit(blips, (0, 0))
         self._draw_panel(surf, source_name, error)
