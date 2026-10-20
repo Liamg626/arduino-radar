@@ -21,6 +21,7 @@ const int FIXED_ANGLE = 90;   // straight ahead
 const int MIN_ANGLE = 15;     // SG90 strains at its 0/180 end stops
 const int MAX_ANGLE = 165;
 const int ANGLE_STEP = 2;
+const bool MIRROR_ANGLE = false;  // set true if objects on your right show up on the left
 
 const unsigned long ECHO_TIMEOUT_US = 25000UL;  // ~4.3 m round trip
 const long MIN_DISTANCE_CM = 2;
@@ -55,7 +56,7 @@ long readDistanceCm() {
 }
 
 void sendReading(int readingAngle, long distanceCm) {
-  Serial.print(readingAngle);
+  Serial.print(MIRROR_ANGLE ? 180 - readingAngle : readingAngle);
   Serial.print(',');
   Serial.println(distanceCm);
 }
