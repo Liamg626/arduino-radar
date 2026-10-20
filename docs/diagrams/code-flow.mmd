@@ -1,0 +1,48 @@
+flowchart TB
+    subgraph ARD["Arduino · arduino/radar/radar.ino"]
+        Setup["setup()<br/>Serial.begin(115200), pinMode Trig / Echo<br/>servo.attach(9) if USE_SERVO"]
+        Loop{"loop()<br/>USE_SERVO? (compile-time #if)"}
+        Move["servo.write(angle)<br/>delay 30 ms to settle"]
+        Read["readDistanceCm()<br/>Trig HIGH 10 µs → pulseIn(Echo, 25 ms timeout)<br/>cm = µs / 58 · -1 if timeout or outside 2–400"]
+        Send["sendReading(angle, cm)<br/>Serial.println #quot;angle,cm#quot;<br/>180 - angle if MIRROR_ANGLE"]
+        Next["angle ± 2°<br/>reverse direction at 15° / 165°"]
+        Fixed["delay 60 ms<br/>angle fixed at 90"]
+        Setup --> Loop
+        Loop -- "1: sweep" --> Move --> Read
+        Loop -- "0: fixed" --> Read
+        Read --> Send
+        Send -- sweep --> Next --> Loop
+        Send -- fixed --> Fixed --> Loop
+    end
+
+    subgraph WORKER["Python worker thread · python/source.py"]
+        Readline["SerialSource._run(): ser.readline()<br/>SimulatedSource fakes pings instead<br/>SerialException → source.error"]
+        Parse["parse_line()<br/>#quot;angle,cm#quot; → Reading · None if malformed"]
+        Put["queue.put(Reading)"]
+        Readline --> Parse --> Put --> Readline
+    end
+
+    subgraph MAIN["Python main thread · python/main.py, 60 fps"]
+        Poll["pygame.event.get(): Q / Esc / close → source.stop(), quit<br/>source.poll(): drain everything queued"]
+        Update["RadarDisplay.update(reading)<br/>track angle + sweep direction<br/>echo within range → append Blip"]
+        Poll --> Update
+    end
+
+    subgraph DRAW["draw() · display.py, contacts.py"]
+        Expire["_expire_blips()<br/>drop blips older than persist_s"]
+        Contacts["find_contacts()<br/>union-find: echoes within 6° and 15 cm<br/>groups of 3+ → Contact, range = median of 5 newest"]
+        Layers["background → echo dots<br/>+ wide and tight blur glow (BLEND_ADD)<br/>→ sweep line and trail"]
+        Labels["_draw_contacts(): 'NN cm' labels<br/>_draw_panel(): BRG · RNG · CONTACTS · NEAREST"]
+        Flip["display.flip(), clock.tick(60)"]
+        Expire --> Contacts --> Layers --> Labels --> Flip
+    end
+
+    Send == "USB serial, 115200 baud" ==> Readline
+    Put -. "queue.Queue (thread-safe hand-off)" .-> Poll
+    Update --> Expire
+    Flip -. "next frame" .-> Poll
+
+    style ARD fill:#fdf1e6,stroke:#c8580f
+    style WORKER fill:#e8f1f8,stroke:#1f6496
+    style MAIN fill:#e8f1f8,stroke:#1f6496
+    style DRAW fill:#e7f5ec,stroke:#2f8a55
