@@ -1,4 +1,4 @@
-"""Group nearby echoes into contacts (objects) and keep their IDs stable between frames."""
+"""Group nearby echoes into contacts (objects)."""
 
 from dataclasses import dataclass
 
@@ -6,8 +6,6 @@ ANGLE_GAP_DEG = 6        # echoes this close in angle...
 DISTANCE_GAP_CM = 15     # ...and this close in range belong to the same object
 MIN_HITS = 3             # fewer echoes than this is treated as noise, not a contact
 RECENT_HITS = 5          # range is the median of this many newest echoes, so moving objects stay current
-MATCH_ANGLE_DEG = 12     # how far a contact may move between frames and keep its ID
-MATCH_DISTANCE_CM = 30
 
 
 @dataclass
@@ -19,10 +17,8 @@ class Blip:
 
 @dataclass
 class Contact:
-    id: int
     angle: float
     distance_cm: int
-    hits: int
     last_seen: float  # birth time of its newest echo
 
 
@@ -51,46 +47,18 @@ def cluster(blips: list[Blip]) -> list[list[Blip]]:
     return list(groups.values())
 
 
-def _summarise(group: list[Blip]) -> Contact:
-    recent = sorted(group, key=lambda b: b.born, reverse=True)[:RECENT_HITS]
-    distances = sorted(b.distance_cm for b in recent)
-    angles = [b.angle for b in group]
-    return Contact(
-        id=0,
-        angle=(min(angles) + max(angles)) / 2,
-        distance_cm=distances[len(distances) // 2],
-        hits=len(group),
-        last_seen=recent[0].born,
-    )
-
-
-class ContactTracker:
-    def __init__(self):
-        self.contacts: list[Contact] = []
-        self._next_id = 1
-
-    def update(self, blips: list[Blip]) -> list[Contact]:
-        found = [_summarise(g) for g in cluster(blips) if len(g) >= MIN_HITS]
-
-        # Biggest contacts claim their nearest previous ID first.
-        unclaimed = list(self.contacts)
-        for contact in sorted(found, key=lambda c: c.hits, reverse=True):
-            candidates = [
-                p for p in unclaimed
-                if abs(p.angle - contact.angle) <= MATCH_ANGLE_DEG
-                and abs(p.distance_cm - contact.distance_cm) <= MATCH_DISTANCE_CM
-            ]
-            match = min(
-                candidates,
-                key=lambda p: abs(p.angle - contact.angle) + abs(p.distance_cm - contact.distance_cm),
-                default=None,
-            )
-            if match:
-                contact.id = match.id
-                unclaimed.remove(match)
-            else:
-                contact.id = self._next_id
-                self._next_id += 1
-
-        self.contacts = sorted(found, key=lambda c: c.id)
-        return self.contacts
+def find_contacts(blips: list[Blip]) -> list[Contact]:
+    """One contact per group of at least MIN_HITS nearby echoes."""
+    contacts = []
+    for group in cluster(blips):
+        if len(group) < MIN_HITS:
+            continue
+        recent = sorted(group, key=lambda b: b.born, reverse=True)[:RECENT_HITS]
+        distances = sorted(b.distance_cm for b in recent)
+        angles = [b.angle for b in group]
+        contacts.append(Contact(
+            angle=(min(angles) + max(angles)) / 2,
+            distance_cm=distances[len(distances) // 2],
+            last_seen=recent[0].born,
+        ))
+    return contacts

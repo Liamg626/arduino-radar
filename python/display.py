@@ -4,8 +4,9 @@ import math
 import time
 
 import pygame
+import pygame.gfxdraw
 
-from contacts import Blip, Contact, ContactTracker
+from contacts import Blip, Contact, find_contacts
 from source import Reading
 
 BG = (2, 12, 6)
@@ -20,10 +21,9 @@ TRAIL_DEGREES = 25
 PANEL_HEIGHT = 80
 MARGIN = 40
 
-ECHO_WIDTH_DEG = 5     # wider than the 2 degree sweep step so neighbouring echoes merge
-ECHO_DEPTH_PX = 9      # radial thickness of each echo
-TIGHT_GLOW = (2, 2)    # downscale factors for blurring: tight halo hugging each echo
-WIDE_GLOW = (4, 4)     # ...and a wide soft bloom that merges nearby contacts
+DOT_RADIUS_PX = 6      # big enough that echoes from neighbouring sweep steps overlap and merge
+TIGHT_GLOW = 2         # blur passes (each halves resolution): tight halo hugging each echo
+WIDE_GLOW = 4          # ...and a wide soft bloom that merges nearby contacts
 
 
 def bearing(angle: float) -> int:
@@ -49,7 +49,7 @@ class RadarDisplay:
         self.angle: int | None = None
         self.last_distance: int | None = None
         self.direction = 0  # +1 sweeping left, -1 sweeping right, 0 static
-        self.tracker = ContactTracker()
+        self.contacts: list[Contact] = []
 
         self._background = self._render_background()
 
@@ -115,16 +115,6 @@ class RadarDisplay:
 
         pygame.draw.line(overlay, (*GREEN, 230), centre, self._to_xy(self.angle, self.max_range), 3)
 
-    def _echo_polygon(self, angle: float, distance_cm: float) -> list[tuple[float, float]]:
-        """Annular sector covering one echo: a short thick arc centred on the reading."""
-        r = distance_cm / self.max_range * self.radius
-        r_out, r_in = r + ECHO_DEPTH_PX / 2, max(0, r - ECHO_DEPTH_PX / 2)
-        steps = 4
-        angles = [angle - ECHO_WIDTH_DEG / 2 + ECHO_WIDTH_DEG * i / steps for i in range(steps + 1)]
-        outer = [self._polar(a, r_out) for a in angles]
-        inner = [self._polar(a, r_in) for a in reversed(angles)]
-        return outer + inner
-
     def _render_echoes(self, now: float) -> pygame.Surface:
         """Echoes on a black layer, meant to be added onto the screen (black adds nothing).
         Oldest first, so fresher, brighter echoes are painted over older ones they overlap."""
@@ -134,16 +124,23 @@ class RadarDisplay:
             heat = max(0.0, 1 - life * 4)  # first quarter of its life: HOT -> GREEN
             brightness = (1 - life) ** 1.5
             colour = [int((g + (h - g) * heat) * brightness) for h, g in zip(HOT, GREEN)]
-            pygame.draw.polygon(layer, colour, self._echo_polygon(blip.angle, blip.distance_cm))
+            x, y = (round(v) for v in self._to_xy(blip.angle, blip.distance_cm))
+            pygame.gfxdraw.filled_circle(layer, x, y, DOT_RADIUS_PX, colour)
+            pygame.gfxdraw.aacircle(layer, x, y, DOT_RADIUS_PX, colour)
         return layer
 
-    def _blur(self, surf: pygame.Surface, factors: tuple[int, ...]) -> pygame.Surface:
-        w, h = surf.get_size()
+    def _blur(self, surf: pygame.Surface, passes: int) -> pygame.Surface:
+        """Cheap soft blur: halve the size `passes` times, then double back up.
+        Small steps keep the result round; one big jump leaves square blocks."""
+        sizes = [surf.get_size()]
         small = surf
-        for factor in factors:
-            w, h = max(1, w // factor), max(1, h // factor)
-            small = pygame.transform.smoothscale(small, (w, h))
-        return pygame.transform.smoothscale(small, surf.get_size())
+        for _ in range(passes):
+            w, h = sizes[-1]
+            sizes.append((max(1, w // 2), max(1, h // 2)))
+            small = pygame.transform.smoothscale(small, sizes[-1])
+        for size in reversed(sizes[:-1]):
+            small = pygame.transform.smoothscale(small, size)
+        return small
 
     def _draw_contacts(self, surf: pygame.Surface, contacts: list[Contact], now: float):
         for contact in contacts:
@@ -151,7 +148,7 @@ class RadarDisplay:
             colour = [int(c * fade) for c in GREEN]
             x, y = self._to_xy(contact.angle, contact.distance_cm)
 
-            label = self.font.render(f"S{contact.id}  {contact.distance_cm} cm", True, colour)
+            label = self.font.render(f"{contact.distance_cm} cm", True, colour)
             lx = min(x + 22, self.width - label.get_width() - 4)
             ly = max(4, y - 34)
             pygame.draw.circle(surf, colour, (x, y), 14, 1)
@@ -171,13 +168,13 @@ class RadarDisplay:
                 rng = f"{self.last_distance:>3d} cm"
             else:
                 rng = "NO ECHO"
-            text = f"BRG {bearing(self.angle):03d}    RNG {rng:<7}    CONTACTS {len(self.tracker.contacts)}"
+            text = f"BRG {bearing(self.angle):03d}    RNG {rng:<7}    CONTACTS {len(self.contacts)}"
             colour = GREEN
         surf.blit(self.big_font.render(text, True, colour), (MARGIN, y))
 
-        if self.tracker.contacts and not error:
-            nearest = min(self.tracker.contacts, key=lambda c: c.distance_cm)
-            text = f"NEAREST S{nearest.id}  {nearest.distance_cm} cm  BRG {bearing(nearest.angle):03d}"
+        if self.contacts and not error:
+            nearest = min(self.contacts, key=lambda c: c.distance_cm)
+            text = f"NEAREST {nearest.distance_cm} cm  BRG {bearing(nearest.angle):03d}"
             label = self.font.render(text, True, GREEN)
             surf.blit(label, (self.width - MARGIN - label.get_width(), y + 4))
 
@@ -187,7 +184,7 @@ class RadarDisplay:
     def draw(self, surf: pygame.Surface, source_name: str = "", error: str | None = None):
         now = time.monotonic()
         self._expire_blips(now)
-        contacts = self.tracker.update(self.blips)
+        self.contacts = find_contacts(self.blips)
 
         surf.blit(self._background, (0, 0))
         # Additive blending: blurred glow first so nearby echoes bleed together, then the sharp echoes.
@@ -201,5 +198,5 @@ class RadarDisplay:
             sweep = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
             self._draw_sweep(sweep)
             surf.blit(sweep, (0, 0))
-        self._draw_contacts(surf, contacts, now)
+        self._draw_contacts(surf, self.contacts, now)
         self._draw_panel(surf, source_name, error)
