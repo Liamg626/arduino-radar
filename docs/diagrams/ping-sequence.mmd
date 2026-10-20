@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant Uno as Arduino
+    participant Servo
+    participant Sensor as HC-SR04
+    participant Py as Python
+
+    Uno->>Servo: write(angle)
+    Note over Servo: 30 ms to settle
+    Uno->>Sensor: Trig HIGH for 10 µs
+    Sensor->>Sensor: 8 × 40 kHz bursts out
+    Note over Sensor: sound hits object<br/>and bounces back
+    Sensor-->>Uno: Echo HIGH for round-trip time
+    Uno->>Uno: distance = time / 58
+    Uno->>Py: "90,123\n" over USB
+    Py->>Py: angle + distance → x, y
+    Py->>Py: draw dot, group into contacts, label range
+    Uno->>Uno: angle += 2° (reverse at 15° / 165°)
