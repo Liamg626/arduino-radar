@@ -1,0 +1,20 @@
+flowchart TB
+    Move["<b>Servo</b> turns the sensor to the next angle<br/>servo.write(angle), wait 30 ms"]
+    Ping["<b>Arduino</b> pulses Trig (D10) for 10 µs"]
+    Sound["<b>HC-SR04</b> sends 8 bursts of 40 kHz sound"]
+    Echo["Sound bounces off an object<br/>Echo (D11) stays HIGH for the round trip"]
+    Calc["<b>Arduino</b> times it with pulseIn()<br/>distance = time ÷ 58 cm, or -1 if no echo"]
+    Send["<b>Arduino</b> prints #quot;angle,distance#quot;<br/>USB serial, 115200 baud"]
+    Parse["<b>source.py</b> reads and parses the line"]
+    Group["<b>contacts.py</b> groups nearby echoes into objects"]
+    Draw["<b>display.py</b> draws dots and range labels<br/>on the sonar screen"]
+
+    Move --> Ping --> Sound --> Echo --> Calc --> Send --> Parse --> Group --> Draw
+    Send -. "angle ± 2°, repeat<br/>(sweeps 15° to 165° and back)" .-> Move
+
+    classDef hardware fill:#fdebd9,stroke:#c8580f,color:#13222a
+    classDef arduino fill:#dbe8f2,stroke:#1f6496,color:#13222a
+    classDef laptop fill:#dff3e6,stroke:#2f8a55,color:#13222a
+    class Move,Sound,Echo hardware
+    class Ping,Calc,Send arduino
+    class Parse,Group,Draw laptop
