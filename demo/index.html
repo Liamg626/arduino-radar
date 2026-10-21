@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Arduino Sonar</title>
+<!-- Fonts load when online; offline the page falls back to system fonts and still works. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&family=Saira+Condensed:wght@600;700&display=swap">
+<style>
+/* Layout: a lab-worksheet column. One dark "instrument screen" (the scope) sits in an otherwise light, schematic page.
+   Colour encodes the physics: amber = sound in the air, blue = electrical data. */
+:root {
+  color-scheme: light;
+  --paper: #edf1f0;
+  --panel: #fbfcfc;
+  --ink: #13222a;
+  --muted: #53646b;
+  --rule: #cbd6d5;
+  --sound: #c8580f;
+  --sound-soft: #f6e2d3;
+  --data: #1f6496;
+  --data-soft: #dbe8f2;
+  --scope-bg: #04130c;
+  --scope-ink: #5dff9a;
+  --scope-dim: #1d5b38;
+  --scope-text: #9fe8bb;
+  --font-display: "Saira Condensed", "Arial Narrow", sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e161a; --panel: #152026; --ink: #e2ebeb; --muted: #94a6ab; --rule: #2a3a41;
+    --sound: #f08a45; --sound-soft: #3a2517; --data: #72b4e2; --data-soft: #17303f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e161a; --panel: #152026; --ink: #e2ebeb; --muted: #94a6ab; --rule: #2a3a41;
+  --sound: #f08a45; --sound-soft: #3a2517; --data: #72b4e2; --data-soft: #17303f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 17px/1.55 var(--font-body);
+}
+img { max-width: 100%; }
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 56px;
+}
+h1, h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1.02;
+  text-wrap: balance;
+  margin: 0;
+}
+h1 { font-size: clamp(2.6rem, 7vw, 4.4rem); }
+h2 { font-size: clamp(1.7rem, 4vw, 2.3rem); }
+h3 { font-size: 1.05rem; margin: 0; }
+p { margin: 0; max-width: 65ch; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+section { display: grid; gap: 20px; min-width: 0; }
+.lede { color: var(--muted); font-size: 1.1rem; }
+
+/* ---------- hero + scope ---------- */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 36px; align-items: center; }
+.hero-copy { display: grid; gap: 16px; }
+.key { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.92rem; }
+.key span { display: inline-flex; align-items: center; gap: 8px; }
+.swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+.swatch.sound { background: var(--sound); }
+.swatch.data { background: var(--data); }
+
+.scope {
+  background: var(--scope-bg);
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.scope canvas { width: 100%; aspect-ratio: 2 / 1.12; display: block; cursor: crosshair; touch-action: manipulation; }
+.scope-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; color: var(--scope-text); font-size: 0.85rem; }
+.scope-bar .readout { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.95rem; color: var(--scope-ink); }
+.serial {
+  font-family: var(--font-mono); font-size: 0.8rem; color: var(--scope-text);
+  display: flex; gap: 6px; overflow: hidden; white-space: nowrap; min-width: 0;
+  border-top: 1px solid var(--scope-dim); padding-top: 8px;
+}
+.serial b { color: var(--scope-dim); font-weight: 400; flex: none; }
+.scope button {
+  font: 600 0.8rem var(--font-mono); color: var(--scope-ink); background: transparent;
+  border: 1px solid var(--scope-dim); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+}
+.scope button:hover { border-color: var(--scope-ink); }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--data); outline-offset: 2px; }
+.scope button:focus-visible { outline-color: var(--scope-ink); }
+
+/* ---------- flow ---------- */
+.flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; position: relative; }
+.stage {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-top: 4px solid var(--c);
+  border-radius: 10px;
+  padding: 16px 14px 18px;
+  margin-right: 26px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+.stage:last-child { margin-right: 0; }
+.stage:not(:last-child)::after {
+  content: "";
+  position: absolute; right: -22px; top: 46px;
+  border: 9px solid transparent; border-left: 13px solid var(--c);
+}
+.stage.sound { --c: var(--sound); }
+.stage.data { --c: var(--data); }
+.stage .num { font: 700 1.9rem/1 var(--font-display); color: var(--c); }
+.stage .where {
+  justify-self: start;
+  font: 600 0.7rem var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 4px;
+  background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c);
+}
+.stage p { font-size: 0.93rem; color: var(--muted); }
+.stage code { font-family: var(--font-mono); font-size: 0.84rem; color: var(--ink); }
+.loop {
+  margin-right: 0;
+  border: 2px dashed var(--rule);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  font-size: 0.95rem;
+}
+.loop .arrow { font: 700 1.4rem/1 var(--font-display); color: var(--muted); }
+
+/* ---------- maths ---------- */
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 22px; display: grid; gap: 16px; min-width: 0; align-content: start; }
+.control { display: grid; gap: 6px; }
+.control label { font-weight: 700; display: flex; justify-content: space-between; gap: 12px; }
+input[type="range"] { width: 100%; accent-color: var(--sound); }
+.toggle { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--data); }
+.track { position: relative; height: 54px; border-bottom: 2px solid var(--rule); }
+.track .sensor { position: absolute; left: 0; bottom: 6px; width: 34px; height: 22px; border-radius: 4px; background: var(--data); }
+.track .wall { position: absolute; bottom: 0; width: 10px; height: 46px; background: var(--ink); border-radius: 2px; transition: left 0.15s; }
+.track .beam { position: absolute; left: 34px; bottom: 15px; height: 4px; background: repeating-linear-gradient(90deg, var(--sound) 0 8px, transparent 8px 14px); transition: width 0.15s; }
+.sums { display: grid; gap: 8px; font-family: var(--font-mono); font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.sums div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dotted var(--rule); padding-bottom: 6px; }
+.sums span:first-child { color: var(--muted); }
+.sums .out { color: var(--data); font-weight: 600; }
+.note { font-size: 0.92rem; color: var(--muted); }
+.note strong { color: var(--sound); }
+.trig svg { width: 100%; max-width: 420px; height: auto; display: block; }
+
+/* ---------- parts + questions ---------- */
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 0.75rem var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+td.mono { white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+.questions { display: grid; gap: 10px; }
+details { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 18px; }
+summary { cursor: pointer; font-weight: 700; }
+details p { margin-top: 10px; color: var(--muted); }
+
+@media (max-width: 860px) {
+  .hero, .two { grid-template-columns: minmax(0, 1fr); }
+  .flow { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+  .stage { margin-right: 0; }
+  .stage:not(:last-child)::after { right: auto; left: 28px; top: auto; bottom: -24px; border: 9px solid transparent; border-top: 13px solid var(--c); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .track .wall, .track .beam { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<main class="page">
+
+  <header class="hero">
+    <div class="hero-copy">
+      <span class="eyebrow">Arduino Uno · HC-SR04 · SG90 servo · Python</span>
+      <h1>How our sonar sees</h1>
+      <p class="lede">A speaker clicks, a microphone listens, and the time in between tells us how far away things are. A servo turns the sensor so we can scan a whole arc, and Python draws what it finds like a submarine's sonar screen.</p>
+      <div class="key">
+        <span><i class="swatch sound"></i>Sound travelling through air</span>
+        <span><i class="swatch data"></i>Electrical signals and data</span>
+      </div>
+      <p class="note">Tap the screen to drop an object, and watch the sweep find it.</p>
+    </div>
+
+    <div class="scope" aria-label="Simulated sonar screen">
+      <canvas id="scope" role="img" aria-label="Sonar sweep showing detected objects"></canvas>
+      <div class="scope-bar">
+        <span class="readout" id="readout">BRG 000 · RNG ---</span>
+        <span style="display:flex;gap:8px">
+          <button type="button" id="pause">Pause</button>
+          <button type="button" id="clear">Clear objects</button>
+        </span>
+      </div>
+      <div class="serial" aria-hidden="true"><b>USB&gt;</b><span id="serial"></span></div>
+    </div>
+  </header>
+
+  <section>
+    <span class="eyebrow">One ping, start to finish</span>
+    <h2>From a click of sound to a dot on the screen</h2>
+    <div class="flow">
+      <div class="stage sound">
+        <span class="num">1</span>
+        <span class="where">Sensor</span>
+        <h3>Ping</h3>
+        <p>The Arduino pulses the <code>Trig</code> pin for 10&nbsp;µs. The sensor fires 8 bursts of 40&nbsp;kHz sound, too high for us to hear.</p>
+      </div>
+      <div class="stage sound">
+        <span class="num">2</span>
+        <span class="where">Sensor</span>
+        <h3>Echo</h3>
+        <p>The sound bounces off an object and comes back. The <code>Echo</code> pin stays HIGH for exactly as long as the round trip took.</p>
+      </div>
+      <div class="stage data">
+        <span class="num">3</span>
+        <span class="where">Arduino</span>
+        <h3>Calculate</h3>
+        <p><code>pulseIn()</code> measures that time in microseconds. Dividing by 58 turns it into centimetres.</p>
+      </div>
+      <div class="stage data">
+        <span class="num">4</span>
+        <span class="where">USB cable</span>
+        <h3>Send</h3>
+        <p>The Arduino prints one line of text, like <code>90,123</code>: the angle, a comma, then the distance. <code>-1</code> means no echo.</p>
+      </div>
+      <div class="stage data">
+        <span class="num">5</span>
+        <span class="where">Python</span>
+        <h3>Draw</h3>
+        <p>Python reads each line, turns angle and distance into an x,y point, and draws a glowing dot. Dots close together are grouped into one object.</p>
+      </div>
+    </div>
+    <div class="loop">
+      <span class="arrow" aria-hidden="true">↻</span>
+      <span><strong>Then repeat.</strong> The servo turns 2°, waits 30&nbsp;ms to settle, and pings again. It sweeps from 15° to 165° and back, about 13 pings a second.</span>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">The physics and the maths</span>
+    <h2>Where does "divide by 58" come from?</h2>
+    <div class="two">
+      <div class="card">
+        <div class="control">
+          <label for="dist"><span>Object distance</span><span class="mono" id="distOut">100 cm</span></label>
+          <input type="range" id="dist" min="2" max="400" value="100">
+        </div>
+        <div class="track" aria-hidden="true">
+          <i class="sensor"></i><i class="beam" id="beam"></i><i class="wall" id="wall"></i>
+        </div>
+        <label class="toggle" for="water"><input type="checkbox" id="water">Put it underwater, like a real submarine</label>
+        <div class="sums">
+          <div><span>Speed of sound</span><span id="speed">343 m/s</span></div>
+          <div><span>Sound travels there and back</span><span id="trip">200 cm</span></div>
+          <div><span>Echo pin HIGH for</span><span id="time" class="out">5,831 µs</span></div>
+          <div><span>Arduino works out (time ÷ 58)</span><span id="calc">100 cm</span></div>
+          <div><span>Line sent over USB</span><span id="line" class="out">90,100</span></div>
+        </div>
+        <p class="note" id="waterNote">Sound covers 1&nbsp;cm in 1&nbsp;÷&nbsp;0.0343&nbsp;= 29.15&nbsp;µs. It goes there <em>and</em> back, so each centimetre of distance costs 2&nbsp;×&nbsp;29.15&nbsp;≈&nbsp;58&nbsp;µs.</p>
+      </div>
+
+      <div class="card trig">
+        <h3>Turning angle + distance into a dot</h3>
+        <p class="note">The sensor gives us polar coordinates (an angle and a distance). The screen needs x and y. Trigonometry converts between them.</p>
+        <svg viewBox="0 0 420 250" role="img" aria-label="Right-angled triangle showing x equals r cos theta and y equals r sin theta">
+          <path d="M 30 220 A 180 180 0 0 1 390 220" fill="none" stroke="var(--rule)" stroke-width="2"/>
+          <line x1="20" y1="220" x2="400" y2="220" stroke="var(--rule)" stroke-width="2"/>
+          <line x1="210" y1="220" x2="300" y2="64" stroke="var(--data)" stroke-width="3"/>
+          <line x1="300" y1="64" x2="300" y2="220" stroke="var(--sound)" stroke-width="2" stroke-dasharray="6 5"/>
+          <line x1="210" y1="220" x2="300" y2="220" stroke="var(--sound)" stroke-width="4"/>
+          <path d="M 250 220 A 40 40 0 0 0 230 185.4" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+          <circle cx="300" cy="64" r="8" fill="var(--data)"/>
+          <circle cx="210" cy="220" r="5" fill="var(--ink)"/>
+          <text x="246" y="208" font-family="JetBrains Mono, monospace" font-size="15" fill="var(--ink)">θ</text>
+          <text x="226" y="132" font-family="JetBrains Mono, monospace" font-size="15" fill="var(--data)" transform="rotate(-60 226 132)">r = distance</text>
+          <text x="308" y="148" font-family="JetBrains Mono, monospace" font-size="14" fill="var(--sound)">y = r·sin θ</text>
+          <text x="214" y="242" font-family="JetBrains Mono, monospace" font-size="14" fill="var(--sound)">x = r·cos θ</text>
+          <text x="312" y="58" font-family="JetBrains Mono, monospace" font-size="14" fill="var(--ink)">object</text>
+          <text x="150" y="242" font-family="JetBrains Mono, monospace" font-size="13" fill="var(--muted)">sensor</text>
+        </svg>
+        <p class="note">On a screen, y counts <em>downwards</em>, so the code uses <span class="mono">y = centre − r·sin θ</span> to draw upwards.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">What's on the desk</span>
+    <h2>Parts and wiring</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Part</th><th>Job</th><th>Wired to</th></tr></thead>
+        <tbody>
+          <tr><td>Elegoo Uno R3</td><td>Runs our C++ code, times the echo and sends the results over USB</td><td class="mono">USB to laptop</td></tr>
+          <tr><td>HC-SR04 ultrasonic sensor</td><td>One "eye" is a speaker, the other a microphone. Range 2–400&nbsp;cm</td><td class="mono">VCC→5V · Trig→D10 · Echo→D11 · GND</td></tr>
+          <tr><td>SG90 servo</td><td>Turns the sensor to an exact angle, 0–180°</td><td class="mono">Red→5V · Brown→GND · Orange→D9</td></tr>
+          <tr><td>Laptop running Python</td><td>Reads the USB serial data and draws the sonar screen with pygame</td><td class="mono">COM port, 115200 baud</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Think about it</span>
+    <h2>Questions to try</h2>
+    <div class="questions">
+      <details><summary>Why does a cushion or a jumper barely show up, but a book shows up clearly?</summary>
+        <p>Soft, fuzzy materials absorb sound instead of reflecting it, so too little comes back. Hard, flat surfaces facing the sensor reflect most of it straight back.</p></details>
+      <details><summary>Why does the code wait between pings instead of firing as fast as possible?</summary>
+        <p>An echo from a far wall could arrive after the next ping has gone out, and the sensor would mistake it for a close object. Waiting lets old echoes die away. The servo also needs time to stop moving.</p></details>
+      <details><summary>A real submarine uses sonar in water. What would change in our maths?</summary>
+        <p>Sound travels about 1,480&nbsp;m/s in water, over 4 times faster than in air, so the echo comes back much sooner. "Divide by 58" would become roughly "divide by 13.5". Tick the underwater box above to see it.</p></details>
+      <details><summary>Two objects are side by side, 10&nbsp;cm apart. Why might the sonar show them as one blob?</summary>
+        <p>The sensor's sound beam spreads out in a cone about 15° wide, so it can hear both at once. Further away, the cone is wider, so objects need to be further apart to be told apart. That is the sonar's resolution.</p></details>
+      <details><summary>The temperature in the room rises from 10&nbsp;°C to 30&nbsp;°C. Does that matter?</summary>
+        <p>Yes, a little. Sound travels faster in warm air (about 337&nbsp;m/s at 10&nbsp;°C and 349&nbsp;m/s at 30&nbsp;°C), so the same object would read about 3% closer on a hot day.</p></details>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(() => {
+  // ---------- simulated scope ----------
+  const canvas = document.getElementById("scope");
+  const ctx = canvas.getContext("2d");
+  const readout = document.getElementById("readout");
+  const serialEl = document.getElementById("serial");
+  const pauseBtn = document.getElementById("pause");
+  const MAX_RANGE = 200, MIN_A = 15, MAX_A = 165, STEP = 2, PERSIST = 5000;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let objects = [
+    { angle: 128, dist: 140, size: 7 },
+    { angle: 92, dist: 70, size: 5 },
+    { angle: 45, dist: 110, size: 9 },
+  ];
+  let blips = [];
+  let angle = 90, dir = 1, lastStep = 0, paused = reduce;
+  let serialLines = [];
+  let W = 0, H = 0, cx = 0, cy = 0, R = 0;
+
+  const bearing = a => String(((Math.round(90 - a) % 360) + 360) % 360).padStart(3, "0");
+  const toXY = (a, d) => {
+    const r = d / MAX_RANGE * R, t = a * Math.PI / 180;
+    return [cx + r * Math.cos(t), cy - r * Math.sin(t)];
+  };
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = W / 2; cy = H - 22; R = Math.min(W / 2 - 34, cy - 22);
+  }
+
+  function ping(now) {
+    let dist = -1;
+    for (const o of objects) {
+      if (Math.abs(angle - o.angle) <= o.size) { dist = Math.round(o.dist + (Math.random() - 0.5) * 4); break; }
+    }
+    if (dist > 0) blips.push({ angle, dist, born: now });
+    readout.textContent = `BRG ${bearing(angle)} · RNG ${dist > 0 ? String(dist).padStart(3, " ") + " cm" : "NO ECHO"}`;
+    serialLines.push(`${angle},${dist}`);
+    if (serialLines.length > 8) serialLines.shift();
+    serialEl.textContent = serialLines.slice().reverse().join("  ");
+  }
+
+  function step(now) {
+    angle += dir * STEP;
+    if (angle >= MAX_A || angle <= MIN_A) { angle = Math.max(MIN_A, Math.min(MAX_A, angle)); dir = -dir; }
+    ping(now);
+  }
+
+  function draw(now) {
+    const css = getComputedStyle(document.documentElement);
+    const ink = css.getPropertyValue("--scope-ink").trim();
+    const dim = css.getPropertyValue("--scope-dim").trim();
+    const text = css.getPropertyValue("--scope-text").trim();
+    ctx.fillStyle = css.getPropertyValue("--scope-bg").trim();
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = dim; ctx.lineWidth = 1; ctx.fillStyle = text;
+    ctx.font = "11px 'JetBrains Mono', monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (let cm = 50; cm <= MAX_RANGE; cm += 50) {
+      const r = cm / MAX_RANGE * R;
+      ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, 0); ctx.stroke();
+      ctx.fillText(cm, cx + r, cy + 12);
+    }
+    for (let a = 0; a <= 180; a += 30) {
+      const [x, y] = toXY(a, MAX_RANGE);
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
+      const [lx, ly] = toXY(a, MAX_RANGE * 1.09);
+      ctx.fillText(bearing(a), lx, Math.min(ly, cy - 8));
+    }
+
+    // sweep trail
+    for (let i = 0; i < 24; i++) {
+      const a0 = angle - dir * i, a1 = a0 - dir;
+      ctx.beginPath(); ctx.moveTo(cx, cy);
+      const [x0, y0] = toXY(a0, MAX_RANGE), [x1, y1] = toXY(a1, MAX_RANGE);
+      ctx.lineTo(x0, y0); ctx.lineTo(x1, y1); ctx.closePath();
+      ctx.globalAlpha = 0.28 * (1 - i / 24); ctx.fillStyle = ink; ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // blips with glow
+    blips = blips.filter(b => now - b.born < PERSIST);
+    ctx.shadowColor = ink;
+    for (const b of blips) {
+      const life = (now - b.born) / PERSIST;
+      const [x, y] = toXY(b.angle, b.dist);
+      ctx.globalAlpha = Math.pow(1 - life, 1.5);
+      ctx.shadowBlur = 14; ctx.fillStyle = ink;
+      ctx.beginPath(); ctx.arc(x, y, Math.max(3.5, R / 70), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+
+    // sweep line
+    const [sx, sy] = toXY(angle, MAX_RANGE);
+    ctx.strokeStyle = ink; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(sx, sy); ctx.stroke();
+  }
+
+  function frame(now) {
+    if (!paused && now - lastStep > 75) { step(now); lastStep = now; }
+    draw(now);
+    requestAnimationFrame(frame);
+  }
+
+  canvas.addEventListener("click", e => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left - cx, y = cy - (e.clientY - rect.top);
+    const dist = Math.hypot(x, y) / R * MAX_RANGE;
+    const a = Math.atan2(y, x) * 180 / Math.PI;
+    if (y < 0 || dist < 5 || dist > MAX_RANGE) return;
+    objects.push({ angle: Math.max(MIN_A, Math.min(MAX_A, a)), dist, size: 6 });
+    if (objects.length > 6) objects.shift();
+  });
+  pauseBtn.addEventListener("click", () => { paused = !paused; pauseBtn.textContent = paused ? "Play" : "Pause"; });
+  document.getElementById("clear").addEventListener("click", () => { objects = []; blips = []; });
+  if (paused) pauseBtn.textContent = "Play";
+
+  // Pre-fill one full sweep so the first frame already shows blips.
+  resize();
+  const start = performance.now();
+  for (let i = 0; i < 75; i++) step(start - (75 - i) * 40);
+  window.addEventListener("resize", resize);
+  requestAnimationFrame(frame);
+
+  // ---------- echo maths ----------
+  const distEl = document.getElementById("dist"), water = document.getElementById("water");
+  const fmt = n => Math.round(n).toLocaleString("en-GB");
+  function updateMaths() {
+    const d = +distEl.value;
+    const speed = water.checked ? 1480 : 343;
+    const us = 2 * d / (speed * 100 / 1e6);  // speed in cm per µs
+    const arduino = Math.round(us / 58);
+    document.getElementById("distOut").textContent = `${d} cm`;
+    document.getElementById("speed").textContent = `${speed.toLocaleString("en-GB")} m/s${water.checked ? " (water)" : " (air)"}`;
+    document.getElementById("trip").textContent = `${2 * d} cm`;
+    document.getElementById("time").textContent = `${fmt(us)} µs`;
+    document.getElementById("calc").textContent = `${arduino} cm${water.checked ? "  ✗ wrong!" : ""}`;
+    document.getElementById("line").textContent = `90,${arduino}`;
+    const pct = d / 400;
+    document.getElementById("wall").style.left = `calc(40px + ${pct} * (100% - 52px))`;
+    document.getElementById("beam").style.width = `calc(${pct} * (100% - 52px) + 4px)`;
+    document.getElementById("waterNote").innerHTML = water.checked
+      ? `Underwater, sound is over 4× faster, so the echo returns sooner. Our code still divides by 58, so it thinks the object is only <strong>${arduino} cm</strong> away. A real submarine's sonar would divide by about 13.5 instead.`
+      : `Sound covers 1&nbsp;cm in 1&nbsp;÷&nbsp;0.0343&nbsp;= 29.15&nbsp;µs. It goes there <em>and</em> back, so each centimetre of distance costs 2&nbsp;×&nbsp;29.15&nbsp;≈&nbsp;58&nbsp;µs.`;
+  }
+  distEl.addEventListener("input", updateMaths);
+  water.addEventListener("change", updateMaths);
+  updateMaths();
+})();
+</script>
+
+</body>
+</html>
